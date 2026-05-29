@@ -1,0 +1,44 @@
+---
+import Layout from '../layouts/Layout.astro';
+import { getCollection } from 'astro:content';
+
+const posts = await getCollection('blog');
+posts.sort((a, b) => b.data.date.getTime() - a.data.date.getTime());
+
+function getPlainTextExcerpt(html: string, length = 200) {
+  const plainText = html.replace(/<[^>]*>/g, '');
+  return plainText.slice(0, length) + (plainText.length > length ? '\u2026' : '');
+}
+---
+
+<Layout title="丝丝大魔王的博客" description="一个极简的个人博客">
+  <ul class="post-list">
+    {
+      posts.length === 0 ? (
+        <p>还没有文章，快去写第一篇吧。</p>
+      ) : (
+        posts.map((post) => {
+          const excerpt = post.data.description
+            || (post.body ? getPlainTextExcerpt(post.body) : '');
+          return (
+            <li class="post-item">
+              <h2>
+                <a href={`/blog/${post.id}/`}>{post.data.title}</a>
+              </h2>
+              <div class="post-meta">
+                {post.data.date.toLocaleDateString('zh-CN', {
+                  year: 'numeric',
+                  month: 'long',
+                  day: 'numeric',
+                })}
+                {post.data.author && <span> · {post.data.author}</span>}
+                {post.data.readingTime && <span> · 阅读时间 {post.data.readingTime} 分钟</span>}
+              </div>
+              <p class="post-excerpt">{excerpt}</p>
+            </li>
+          );
+        })
+      )
+    }
+  </ul>
+</Layout>

@@ -1,0 +1,48 @@
+---
+import Layout from '../../layouts/Layout.astro';
+import { getCollection, render, type CollectionEntry } from 'astro:content';
+
+export async function getStaticPaths() {
+  const posts = await getCollection('blog');
+  return posts.map((post) => ({
+    params: { slug: post.id },
+    props: { post },
+  }));
+}
+
+const { post } = Astro.props as { post: CollectionEntry<'blog'> };
+const { Content } = await render(post);
+---
+
+<Layout
+  title={post.data.title}
+  description={post.data.description}
+>
+  <article>
+    <h1>{post.data.title}</h1>
+
+    <div class="article-meta">
+      <span>
+        {post.data.date.toLocaleDateString('zh-CN', {
+          year: 'numeric',
+          month: 'long',
+          day: 'numeric',
+        })}
+      </span>
+      {post.data.author && <span>作者：{post.data.author}</span>}
+      {post.data.readingTime && <span>阅读时间 {post.data.readingTime} 分钟</span>}
+    </div>
+
+    <Content />
+
+    {
+      post.data.tags && post.data.tags.length > 0 && (
+        <div class="tags">
+          {post.data.tags.map((tag: string) => (
+            <span class="tag">{tag}</span>
+          ))}
+        </div>
+      )
+    }
+  </article>
+</Layout>
