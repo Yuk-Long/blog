@@ -5,6 +5,7 @@ interface Props {
 }
 
 const { title, description } = Astro.props;
+const base = Astro.url ? '' : '/blog/';
 ---
 
 <!doctype html>
@@ -35,7 +36,6 @@ const { title, description } = Astro.props;
         position: relative;
       }
 
-      /* ====== 花瓣飘落动画 ====== */
       .petals-container {
         position: fixed;
         top: 0;
@@ -55,13 +55,11 @@ const { title, description } = Astro.props;
       }
 
       .petal::before {
-        content: '';
+        content: '\2727';
         display: block;
-        width: 16px;
-        height: 20px;
-        background: radial-gradient(ellipse at 30% 30%, #f8c8d8, #e8a0b8);
-        border-radius: 50% 0 50% 0;
-        transform: rotate(45deg);
+        font-size: 20px;
+        color: #e8a0b8;
+        text-shadow: 0 0 6px rgba(232,160,184,0.3);
       }
 
       @keyframes fall {
@@ -92,17 +90,13 @@ const { title, description } = Astro.props;
       .petal:nth-child(9) { left: 70%; animation-duration: 16s; animation-delay: 2.5s; }
       .petal:nth-child(10) { left: 78%; animation-duration: 12s; animation-delay: 7s; }
       .petal:nth-child(11) { left: 85%; animation-duration: 19s; animation-delay: 3.5s; }
-      .petal:nth-child(12) { left: 92%; animation-duration: 15s; animation-delay: 1.5s; }
+      .petal:nth-child(12) { left: 92%; animation-duration: 15s; animation-delay: 1.5s; }'@ + @'
 
-      /* 大小变化 */
-      .petal:nth-child(odd)::before  { width: 14px; height: 18px; }
-      .petal:nth-child(3n)::before   { width: 12px; height: 15px; }
-      .petal:nth-child(4n)::before   { width: 18px; height: 22px; }
-
-      /* 颜色变化 */
-      .petal:nth-child(3n)::before  { background: radial-gradient(ellipse at 30% 30%, #fde2e8, #f0b8c8); }
-      .petal:nth-child(5n)::before  { background: radial-gradient(ellipse at 30% 30%, #fce4ec, #f8c0d0); }
-      .petal:nth-child(7n)::before  { background: radial-gradient(ellipse at 30% 30%, #fff0f3, #f4c2d0); }
+      .petal:nth-child(odd)::before  { font-size: 16px; }
+      .petal:nth-child(3n)::before   { font-size: 14px; color: #f0b8c8; }
+      .petal:nth-child(4n)::before   { font-size: 22px; }
+      .petal:nth-child(5n)::before   { color: #f8c0d0; }
+      .petal:nth-child(7n)::before   { color: #f4c2d0; }
 
       header {
         border-bottom: 1px solid #e8e8e4;
@@ -112,7 +106,6 @@ const { title, description } = Astro.props;
         backdrop-filter: blur(4px);
         background: rgba(250,250,248,0.85);
       }
-
       nav {
         max-width: 680px;
         margin: 0 auto;
@@ -376,7 +369,6 @@ const { title, description } = Astro.props;
     </style>
   </head>
   <body>
-    <!-- 花瓣容器 -->
     <div class="petals-container">
       <div class="petal"></div>
       <div class="petal"></div>
@@ -394,10 +386,10 @@ const { title, description } = Astro.props;
 
     <header>
       <nav>
-        <a class="nav-brand" href="/blog/">我的博客</a>
+        <a class="nav-brand" href="/">我的博客</a>
         <ul class="nav-links">
-          <li><a href="/blog/">首页</a></li>
-          <li><a href="/blog/about/">关于</a></li>
+          <li><a href="/">首页</a></li>
+          <li><a href="/about/">关于</a></li>
         </ul>
       </nav>
     </header>
