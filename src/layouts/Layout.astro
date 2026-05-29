@@ -5,13 +5,13 @@ interface Props {
 }
 
 const { title, description } = Astro.props;
-const base = Astro.url ? '' : '/blog/';
+
 ---
 
 <!doctype html>
 <html lang="zh-CN">
   <head>
-    <meta charset="UTF-8" /><base href="/blog/" />
+    <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>{title}</title>
     {description && <meta name="description" content={description} />}
