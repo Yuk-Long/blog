@@ -3,10 +3,8 @@ import { defineConfig } from "astro/config";
 export default defineConfig({
   site: "https://Yuk-Long.github.io",
   base: "/blog/",
-  vite: {
-    build: {
-      assetsDir: "assets",
-    },
+  build: {
+    assets: "assets",
   },
   markdown: {
     shikiConfig: {
