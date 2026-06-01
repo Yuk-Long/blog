@@ -23,7 +23,7 @@ function getPlainTextExcerpt(html: string, length = 200) {
           return (
             <li class="post-item">
               <h2>
-                <a href={`/blog/posts/${post.id}/`}>{post.data.title}</a>
+                <a href={`/blog/blog/posts/${post.id}/`}>{post.data.title}</a>
               </h2>
               <div class="post-meta">
                 {post.data.date.toLocaleDateString('zh-CN', {
