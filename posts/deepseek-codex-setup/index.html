@@ -1,0 +1,150 @@
+<!DOCTYPE html><html lang="zh-CN"> <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>用 DeepSeek V4 接入 Codex：一次从零开始的配置之旅</title><meta name="description" content="记录我如何通过 Moon Bridge 将 DeepSeek V4 接入 OpenAI Codex，从环境准备到成功运行的全过程，以及每一步的思考"><link rel="stylesheet" href="/blog/assets/Layout.BPlRKtsE.css"></head> <body> <div class="petals-container"> <div class="petal"></div> <div class="petal"></div> <div class="petal"></div> <div class="petal"></div> <div class="petal"></div> <div class="petal"></div> <div class="petal"></div> <div class="petal"></div> <div class="petal"></div> <div class="petal"></div> <div class="petal"></div> <div class="petal"></div> </div> <header> <nav> <a class="nav-brand" href="/blog/">我的博客</a> <ul class="nav-links"> <li><a href="/blog/">首页</a></li> <li><a href="/blog/about/">关于</a></li> </ul> </nav> </header> <main class="container">  <article> <h1>用 DeepSeek V4 接入 Codex：一次从零开始的配置之旅</h1> <div class="article-meta"> <span> 2026年5月29日 </span> <span>作者：丝丝大魔王</span> <span>阅读时间 8 分钟</span> </div> <p>在搭好这个博客之后，我开始琢磨：能不能用更实惠的模型来驱动我的编程助手？</p>
+<h2 id="我的想法">我的想法</h2>
+<p>Codex 是 OpenAI 出的编程 Agent，非常好用。但默认它连的是 OpenAI 自家的模型，API 的费用对我来说有点高了。在 GitHub 上看到有人用 DeepSeek V4 接入 Codex 的教程，我决定试一试。</p>
+<p>简单来说，整个方案就是：</p>
+<blockquote>
+<p>我在终端输入指令 → Codex 解析成请求 → Moon Bridge 做翻译转发 → DeepSeek V4 处理 → 结果原路返回给我</p>
+</blockquote>
+<p>之所以需要一个”翻译层”，是因为 Codex 使用 OpenAI Responses API 与模型通信，而 DeepSeek 用的是自己的格式。Moon Bridge 就是那个在中间做格式转换的桥梁。</p>
+<h2 id="第一步安装依赖">第一步：安装依赖</h2>
+<p>需要准备三个东西：</p>
+<ul>
+<li><a href="https://nodejs.org/en/download/">Node.js</a> 18+</li>
+<li><a href="https://go.dev/dl/">Go</a> 1.25+</li>
+<li>Codex CLI</li>
+</ul>
+<p>Node.js 我之前搭博客的时候就装好了，所以这一步只需要装 Go 和 Codex：</p>
+<pre class="astro-code github-light" style="background-color:#fff;color:#24292e; overflow-x: auto;" tabindex="0" data-language="shell"><code><span class="line"><span style="color:#6F42C1">npm</span><span style="color:#032F62"> install</span><span style="color:#005CC5"> -g</span><span style="color:#032F62"> @openai/codex</span></span></code></pre>
+<p>验证安装：</p>
+<pre class="astro-code github-light" style="background-color:#fff;color:#24292e; overflow-x: auto;" tabindex="0" data-language="shell"><code><span class="line"><span style="color:#6F42C1">codex</span><span style="color:#005CC5"> --version</span></span>
+<span class="line"><span style="color:#6F42C1">go</span><span style="color:#032F62"> version</span></span></code></pre>
+<p>都输出版本号就说明装好了。</p>
+<h2 id="第二步获取-deepseek-api-key">第二步：获取 DeepSeek API Key</h2>
+<p>前往 <a href="https://platform.deepseek.com/api_keys">DeepSeek 开放平台</a> 创建并复制 API Key。</p>
+<p>这个 Key 就是你和 DeepSeek 之间的身份凭证，千万不要泄露。</p>
+<h2 id="第三步配置-moon-bridge最关键的一步">第三步：配置 Moon Bridge（最关键的一步）</h2>
+<p>克隆仓库并进入目录：</p>
+<pre class="astro-code github-light" style="background-color:#fff;color:#24292e; overflow-x: auto;" tabindex="0" data-language="shell"><code><span class="line"><span style="color:#6F42C1">git</span><span style="color:#032F62"> clone</span><span style="color:#032F62"> https://github.com/ZhiYi-R/moon-bridge.git</span></span>
+<span class="line"><span style="color:#005CC5">cd</span><span style="color:#032F62"> moon-bridge</span></span></code></pre>
+<p>创建 <code>config.yml</code>，这是我的实际配置：</p>
+<pre class="astro-code github-light" style="background-color:#fff;color:#24292e; overflow-x: auto;" tabindex="0" data-language="yaml"><code><span class="line"><span style="color:#22863A">mode</span><span style="color:#24292E">: </span><span style="color:#032F62">"Transform"</span></span>
+<span class="line"></span>
+<span class="line"><span style="color:#22863A">server</span><span style="color:#24292E">:</span></span>
+<span class="line"><span style="color:#22863A">  addr</span><span style="color:#24292E">: </span><span style="color:#032F62">"127.0.0.1:38441"</span></span>
+<span class="line"></span>
+<span class="line"><span style="color:#22863A">models</span><span style="color:#24292E">:</span></span>
+<span class="line"><span style="color:#22863A">  deepseek-v4-pro</span><span style="color:#24292E">:</span></span>
+<span class="line"><span style="color:#22863A">    context_window</span><span style="color:#24292E">: </span><span style="color:#005CC5">1000000</span></span>
+<span class="line"><span style="color:#22863A">    max_output_tokens</span><span style="color:#24292E">: </span><span style="color:#005CC5">384000</span></span>
+<span class="line"><span style="color:#22863A">    default_reasoning_level</span><span style="color:#24292E">: </span><span style="color:#032F62">"high"</span></span>
+<span class="line"><span style="color:#22863A">    supported_reasoning_levels</span><span style="color:#24292E">:</span></span>
+<span class="line"><span style="color:#24292E">      - </span><span style="color:#22863A">effort</span><span style="color:#24292E">: </span><span style="color:#032F62">"high"</span></span>
+<span class="line"><span style="color:#22863A">        description</span><span style="color:#24292E">: </span><span style="color:#032F62">"High reasoning effort"</span></span>
+<span class="line"><span style="color:#24292E">      - </span><span style="color:#22863A">effort</span><span style="color:#24292E">: </span><span style="color:#032F62">"xhigh"</span></span>
+<span class="line"><span style="color:#22863A">        description</span><span style="color:#24292E">: </span><span style="color:#032F62">"Extra high reasoning effort"</span></span>
+<span class="line"><span style="color:#22863A">    supports_reasoning_summaries</span><span style="color:#24292E">: </span><span style="color:#005CC5">true</span></span>
+<span class="line"><span style="color:#22863A">    default_reasoning_summary</span><span style="color:#24292E">: </span><span style="color:#032F62">"auto"</span></span>
+<span class="line"><span style="color:#22863A">    extensions</span><span style="color:#24292E">:</span></span>
+<span class="line"><span style="color:#22863A">      deepseek_v4</span><span style="color:#24292E">:</span></span>
+<span class="line"><span style="color:#22863A">        enabled</span><span style="color:#24292E">: </span><span style="color:#005CC5">true</span></span>
+<span class="line"><span style="color:#22863A">  deepseek-v4-flash</span><span style="color:#24292E">:</span></span>
+<span class="line"><span style="color:#22863A">    context_window</span><span style="color:#24292E">: </span><span style="color:#005CC5">1000000</span></span>
+<span class="line"><span style="color:#22863A">    max_output_tokens</span><span style="color:#24292E">: </span><span style="color:#005CC5">384000</span></span>
+<span class="line"><span style="color:#22863A">    default_reasoning_level</span><span style="color:#24292E">: </span><span style="color:#032F62">"high"</span></span>
+<span class="line"><span style="color:#22863A">    supported_reasoning_levels</span><span style="color:#24292E">:</span></span>
+<span class="line"><span style="color:#24292E">      - </span><span style="color:#22863A">effort</span><span style="color:#24292E">: </span><span style="color:#032F62">"high"</span></span>
+<span class="line"><span style="color:#22863A">        description</span><span style="color:#24292E">: </span><span style="color:#032F62">"High reasoning effort"</span></span>
+<span class="line"><span style="color:#24292E">      - </span><span style="color:#22863A">effort</span><span style="color:#24292E">: </span><span style="color:#032F62">"xhigh"</span></span>
+<span class="line"><span style="color:#22863A">        description</span><span style="color:#24292E">: </span><span style="color:#032F62">"Extra high reasoning effort"</span></span>
+<span class="line"><span style="color:#22863A">    supports_reasoning_summaries</span><span style="color:#24292E">: </span><span style="color:#005CC5">true</span></span>
+<span class="line"><span style="color:#22863A">    default_reasoning_summary</span><span style="color:#24292E">: </span><span style="color:#032F62">"auto"</span></span>
+<span class="line"><span style="color:#22863A">    extensions</span><span style="color:#24292E">:</span></span>
+<span class="line"><span style="color:#22863A">      deepseek_v4</span><span style="color:#24292E">:</span></span>
+<span class="line"><span style="color:#22863A">        enabled</span><span style="color:#24292E">: </span><span style="color:#005CC5">true</span></span>
+<span class="line"></span>
+<span class="line"><span style="color:#22863A">providers</span><span style="color:#24292E">:</span></span>
+<span class="line"><span style="color:#22863A">  deepseek</span><span style="color:#24292E">:</span></span>
+<span class="line"><span style="color:#22863A">    base_url</span><span style="color:#24292E">: </span><span style="color:#032F62">"https://api.deepseek.com/anthropic"</span></span>
+<span class="line"><span style="color:#22863A">    api_key</span><span style="color:#24292E">: </span><span style="color:#032F62">"sk-your-deepseek-api-key"</span></span>
+<span class="line"><span style="color:#22863A">    offers</span><span style="color:#24292E">:</span></span>
+<span class="line"><span style="color:#24292E">      - </span><span style="color:#22863A">model</span><span style="color:#24292E">: </span><span style="color:#032F62">deepseek-v4-pro</span></span>
+<span class="line"><span style="color:#24292E">      - </span><span style="color:#22863A">model</span><span style="color:#24292E">: </span><span style="color:#032F62">deepseek-v4-flash</span></span>
+<span class="line"></span>
+<span class="line"><span style="color:#22863A">routes</span><span style="color:#24292E">:</span></span>
+<span class="line"><span style="color:#22863A">  moonbridge</span><span style="color:#24292E">:</span></span>
+<span class="line"><span style="color:#22863A">    model</span><span style="color:#24292E">: </span><span style="color:#032F62">deepseek-v4-pro</span></span>
+<span class="line"><span style="color:#22863A">    provider</span><span style="color:#24292E">: </span><span style="color:#032F62">deepseek</span></span>
+<span class="line"></span>
+<span class="line"><span style="color:#22863A">defaults</span><span style="color:#24292E">:</span></span>
+<span class="line"><span style="color:#22863A">  model</span><span style="color:#24292E">: </span><span style="color:#032F62">moonbridge</span></span>
+<span class="line"><span style="color:#22863A">  max_tokens</span><span style="color:#24292E">: </span><span style="color:#005CC5">65536</span></span></code></pre>
+<p>我花了不少时间理解每个字段的含义：</p>
+<ul>
+<li><strong>mode: “Transform”</strong>：运行模式，做请求格式转换</li>
+<li><strong>server.addr</strong>：我用的端口是 <code>38441</code>，因为 38440 被占用了</li>
+<li><strong>models</strong>：定义你能用哪些模型，以及每个模型的能力边界。上下文窗口 100 万 token，最大输出 384000 token，支持 high 和 xhigh 两种推理档位，还启用了 <code>deepseek_v4</code> 扩展</li>
+<li><strong>providers</strong>：告诉 Moon Bridge 去哪里找模型，base_url 指向 DeepSeek 的 API 地址，api_key 填你的真实 Key</li>
+<li><strong>routes</strong>：路由规则，把请求转发到 deepseek-v4-pro 模型</li>
+<li><strong>defaults</strong>：默认模型名为 moonbridge，最大 token 65536</li>
+</ul>
+<p>我同时配了两个模型：<code>deepseek-v4-pro</code> 处理复杂任务，<code>deepseek-v4-flash</code> 用来快速响应简单问题。</p>
+<h2 id="第四步启动-moon-bridge">第四步：启动 Moon Bridge</h2>
+<pre class="astro-code github-light" style="background-color:#fff;color:#24292e; overflow-x: auto;" tabindex="0" data-language="shell"><code><span class="line"><span style="color:#6F42C1">go</span><span style="color:#032F62"> run</span><span style="color:#032F62"> ./cmd/moonbridge</span><span style="color:#005CC5"> --config</span><span style="color:#032F62"> config.yml</span></span></code></pre>
+<p>保持这个终端不要关。Moon Bridge 监听 <code>127.0.0.1:38441</code>（注意我改了端口），提供 OpenAI Responses 兼容接口：</p>
+<pre class="astro-code github-light" style="background-color:#fff;color:#24292e; overflow-x: auto;" tabindex="0" data-language="text"><code><span class="line"><span>http://127.0.0.1:38441/v1/responses</span></span></code></pre>
+<p>验证一下是否正常：</p>
+<pre class="astro-code github-light" style="background-color:#fff;color:#24292e; overflow-x: auto;" tabindex="0" data-language="shell"><code><span class="line"><span style="color:#6F42C1">curl</span><span style="color:#032F62"> http://127.0.0.1:38441/v1/models</span></span></code></pre>
+<p>如果返回了一堆模型信息，说明服务正常。我当时看到返回数据的那一刻还挺激动的——说明链路已经通了一半。</p>
+<p>还可以发送一条测试请求：</p>
+<pre class="astro-code github-light" style="background-color:#fff;color:#24292e; overflow-x: auto;" tabindex="0" data-language="shell"><code><span class="line"><span style="color:#6F42C1">curl</span><span style="color:#032F62"> http://127.0.0.1:38441/v1/responses</span><span style="color:#005CC5"> \</span></span>
+<span class="line"><span style="color:#005CC5">  -H</span><span style="color:#032F62"> "Content-Type: application/json"</span><span style="color:#005CC5"> \</span></span>
+<span class="line"><span style="color:#005CC5">  -d</span><span style="color:#032F62"> '{</span></span>
+<span class="line"><span style="color:#032F62">    "model": "moonbridge",</span></span>
+<span class="line"><span style="color:#032F62">    "input": "请用一句话打个招呼。",</span></span>
+<span class="line"><span style="color:#032F62">    "max_output_tokens": 1024</span></span>
+<span class="line"><span style="color:#032F62">  }'</span></span></code></pre>
+<p>如果能收到正常回复，说明 DeepSeek 那边也通了。</p>
+<h2 id="第五步生成-codex-配置">第五步：生成 Codex 配置</h2>
+<p>另开一个终端，在 Moon Bridge 目录下执行。</p>
+<p><strong>如果你已经有 Codex 配置，先备份</strong>：</p>
+<pre class="astro-code github-light" style="background-color:#fff;color:#24292e; overflow-x: auto;" tabindex="0" data-language="powershell"><code><span class="line"><span style="color:#24292E">$CODEX_HOME_DIR </span><span style="color:#D73A49">=</span><span style="color:#D73A49"> if</span><span style="color:#24292E"> ($</span><span style="color:#005CC5">env:</span><span style="color:#24292E">CODEX_HOME) { $</span><span style="color:#005CC5">env:</span><span style="color:#24292E">CODEX_HOME } </span><span style="color:#D73A49">else</span><span style="color:#24292E"> { </span><span style="color:#032F62">"</span><span style="color:#005CC5">$HOME</span><span style="color:#032F62">\.codex"</span><span style="color:#24292E"> }</span></span>
+<span class="line"><span style="color:#005CC5">New-Item</span><span style="color:#D73A49"> -</span><span style="color:#24292E">ItemType Directory </span><span style="color:#D73A49">-</span><span style="color:#24292E">Force </span><span style="color:#D73A49">-</span><span style="color:#24292E">Path $CODEX_HOME_DIR </span><span style="color:#D73A49">|</span><span style="color:#005CC5"> Out-Null</span></span>
+<span class="line"></span>
+<span class="line"><span style="color:#6A737D"># 备份当前 config.toml</span></span>
+<span class="line"><span style="color:#D73A49">if</span><span style="color:#24292E"> (</span><span style="color:#005CC5">Test-Path</span><span style="color:#032F62"> "</span><span style="color:#24292E">$CODEX_HOME_DIR</span><span style="color:#032F62">\config.toml"</span><span style="color:#24292E">) {</span></span>
+<span class="line"><span style="color:#005CC5">  Copy-Item</span><span style="color:#032F62"> "</span><span style="color:#24292E">$CODEX_HOME_DIR</span><span style="color:#032F62">\config.toml"</span><span style="color:#032F62"> "</span><span style="color:#24292E">$CODEX_HOME_DIR</span><span style="color:#032F62">\config.toml.bak"</span><span style="color:#D73A49"> -</span><span style="color:#24292E">Force</span></span>
+<span class="line"><span style="color:#24292E">}</span></span></code></pre>
+<p>然后生成配置（注意 base-url 用的是 38441 端口）：</p>
+<pre class="astro-code github-light" style="background-color:#fff;color:#24292e; overflow-x: auto;" tabindex="0" data-language="powershell"><code><span class="line"><span style="color:#24292E">$MODEL </span><span style="color:#D73A49">=</span><span style="color:#24292E"> go run .</span><span style="color:#D73A49">/</span><span style="color:#24292E">cmd</span><span style="color:#D73A49">/</span><span style="color:#24292E">moonbridge </span><span style="color:#D73A49">--</span><span style="color:#24292E">config config.yml </span><span style="color:#D73A49">--</span><span style="color:#24292E">print</span><span style="color:#D73A49">-</span><span style="color:#24292E">codex</span><span style="color:#D73A49">-</span><span style="color:#24292E">model</span></span>
+<span class="line"><span style="color:#24292E">go run .</span><span style="color:#D73A49">/</span><span style="color:#24292E">cmd</span><span style="color:#D73A49">/</span><span style="color:#24292E">moonbridge </span><span style="color:#D73A49">`</span></span>
+<span class="line"><span style="color:#D73A49">  --</span><span style="color:#24292E">config config.yml </span><span style="color:#D73A49">`</span></span>
+<span class="line"><span style="color:#D73A49">  --</span><span style="color:#24292E">print</span><span style="color:#D73A49">-</span><span style="color:#24292E">codex</span><span style="color:#D73A49">-</span><span style="color:#24292E">config </span><span style="color:#032F62">"</span><span style="color:#24292E">$MODEL</span><span style="color:#032F62">"</span><span style="color:#D73A49"> `</span></span>
+<span class="line"><span style="color:#D73A49">  --</span><span style="color:#24292E">codex</span><span style="color:#D73A49">-</span><span style="color:#24292E">base</span><span style="color:#D73A49">-</span><span style="color:#24292E">url </span><span style="color:#032F62">"http://127.0.0.1:38441/v1"</span><span style="color:#D73A49"> `</span></span>
+<span class="line"><span style="color:#D73A49">  --</span><span style="color:#24292E">codex</span><span style="color:#D73A49">-</span><span style="color:#24292E">home </span><span style="color:#032F62">"</span><span style="color:#24292E">$CODEX_HOME_DIR</span><span style="color:#032F62">"</span><span style="color:#D73A49"> `</span></span>
+<span class="line"><span style="color:#D73A49">  |</span><span style="color:#005CC5"> Set-Content</span><span style="color:#D73A49"> -</span><span style="color:#24292E">Path </span><span style="color:#032F62">"</span><span style="color:#24292E">$CODEX_HOME_DIR</span><span style="color:#032F62">\config.toml"</span></span></code></pre>
+<p>这会创建两个关键文件：</p>
+<ul>
+<li><strong><code>config.toml</code></strong>：Codex 的 provider 配置，使用 <code>wire_api = "responses"</code>，告诉 Codex 去哪找模型</li>
+<li><strong><code>models_catalog.json</code></strong>：模型能力清单，包括上下文窗口、推理档位和工具支持等元数据</li>
+</ul>
+<p>生成前可以先检查 Moon Bridge 读到的默认模型名称：</p>
+<pre class="astro-code github-light" style="background-color:#fff;color:#24292e; overflow-x: auto;" tabindex="0" data-language="shell"><code><span class="line"><span style="color:#6F42C1">go</span><span style="color:#032F62"> run</span><span style="color:#032F62"> ./cmd/moonbridge</span><span style="color:#005CC5"> --config</span><span style="color:#032F62"> config.yml</span><span style="color:#005CC5"> --print-codex-model</span></span>
+<span class="line"><span style="color:#6A737D"># 输出：moonbridge</span></span></code></pre>
+<h2 id="第六步启动-codex">第六步：启动 Codex</h2>
+<p>进入要处理的项目目录，启动 Codex：</p>
+<pre class="astro-code github-light" style="background-color:#fff;color:#24292e; overflow-x: auto;" tabindex="0" data-language="shell"><code><span class="line"><span style="color:#005CC5">cd</span><span style="color:#032F62"> /path/to/my-project</span></span>
+<span class="line"><span style="color:#6F42C1">codex</span></span></code></pre>
+<p>此时 Codex 会把 OpenAI Responses 请求发送给本地的 Moon Bridge（端口 38441），再由 Moon Bridge 路由到 DeepSeek V4。整个链路就通了。</p>
+<p>包括你现在看到的这篇博客，就是在这种配置下由 Codex + DeepSeek V4 帮我写出来的。</p>
+<h2 id="我踩过的坑">我踩过的坑</h2>
+<ul>
+<li><strong>端口冲突</strong>：我一开始用 38440，发现被占用了，于是改成 38441。改完 <code>config.yml</code> 后记得同步改第五步里的 <code>codex-base-url</code></li>
+<li><strong>API Key 不生效（401 错误）</strong>：检查 <code>config.yml</code> 中的 API Key 是否粘贴完整，有没有多余空格或引号</li>
+<li><strong>余额不足（402 错误）</strong>：检查 DeepSeek 开放平台账户余额，充一点就好了</li>
+<li><strong>Codex 看不到模型</strong>：这个坑我踩了两次——生成完配置后没有重启 Codex。Codex 只在启动时读一次配置，改完必须重启</li>
+<li><strong>配置加载失败</strong>：提示 <code>field provider not found</code>，说明 <code>config.yml</code> 格式不对，检查一下是不是用了旧版语法</li>
+</ul>
+<h2 id="我的感受">我的感受</h2>
+<p>整个过程比我想象的要顺利。最让我意外的是 Moon Bridge 的自动配置生成功能——它直接帮我生成了 Codex 需要的所有配置文件，省去了手动查文档、对着模板改的时间。</p>
+<p>用 DeepSeek V4 写代码的体验，说实话不比直接用 OpenAI 的模型差。响应速度很快，对中文的理解也很到位。关键是成本低了不止一个数量级，对于个人开发者来说非常友好。</p>
+<p>如果你也在用 Codex，强烈建议试试这套配置。按这个顺序来：环境检查 → 获取 Key → 配 Moon Bridge → 生成 Codex 配置 → 启动，每一步都先验证再继续，基本不会出大问题。</p> <div class="tags"> <span class="tag">AI</span><span class="tag">Codex</span><span class="tag">DeepSeek</span><span class="tag">配置</span> </div> </article>  </main> <footer> <p>&copy; 2026 我的博客 · 由 <a href="https://astro.build" target="_blank">Astro</a> 驱动</p> <p>联系我：<a href="mailto:hello@example.com">hello@example.com</a></p> </footer> </body></html>
