@@ -90,7 +90,7 @@ const { title, description } = Astro.props;
       .petal:nth-child(9) { left: 70%; animation-duration: 16s; animation-delay: 2.5s; }
       .petal:nth-child(10) { left: 78%; animation-duration: 12s; animation-delay: 7s; }
       .petal:nth-child(11) { left: 85%; animation-duration: 19s; animation-delay: 3.5s; }
-      .petal:nth-child(12) { left: 92%; animation-duration: 15s; animation-delay: 1.5s; }'@ + @'
+      .petal:nth-child(12) { left: 92%; animation-duration: 15s; animation-delay: 1.5s; }
 
       .petal:nth-child(odd)::before  { font-size: 16px; }
       .petal:nth-child(3n)::before   { font-size: 14px; color: #f0b8c8; }
@@ -386,10 +386,10 @@ const { title, description } = Astro.props;
 
     <header>
       <nav>
-        <a class="nav-brand" href="/blog/">我的博客</a>
+        <a class="nav-brand" href="/">我的博客</a>
         <ul class="nav-links">
-          <li><a href="/blog/">首页</a></li>
-          <li><a href="/blog/about/">关于</a></li>
+          <li><a href="/">首页</a></li>
+          <li><a href="/about/">关于</a></li>
         </ul>
       </nav>
     </header>

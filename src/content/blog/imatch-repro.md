@@ -7,9 +7,30 @@ readingTime: 8
 author: "丝丝大魔王"
 ---
 
+
 ## 项目背景
 
-（待补充）
+iMatch（Instruction-augmented Multimodal Alignment for Image-Text and Element Matching）是 **NTIRE 2025 文本到图像生成模型质量评估挑战赛** 图像-文本对齐赛道的**冠军方法**，相关工作发表在 CVPRW 2025 上。
+
+### 挑战赛介绍
+
+NTIRE 2025 挑战赛聚焦于 AI 生成图像的质量评估，分为两个赛道：
+
+- **对齐赛道（Alignment Track）**：评估生成图像与文本描述之间的匹配度，使用 **EvalMuse-40K** 数据集（约 4 万对图文，含细粒度对齐标注）
+- **结构赛道（Structure Track）**：检测生成图像中的结构失真，使用 EvalMuse-Structure 数据集
+
+比赛共吸引 **582 名注册参与者**，收到超过 3000 次提交。
+
+### iMatch 核心思路
+
+iMatch 的核心创新在于：
+
+1. **QAlign 策略**：将 MOS 分数（1-5）离散化为 15 个字母等级（a-o），把回归问题转化为分类问题，并通过 softmax 加权还原连续分数
+2. **多模态大模型微调**：基于 Qwen2.5-VL-7B，用 LoRA 高效微调，让模型学会图文间的细粒度对应关系
+3. **数据增强**：包含四种增强策略，其中验证集增强让模型在训练过程中生成高质量伪标签再合并回训练集
+
+我选择复现这个方法，一方面是因为它在挑战赛中的表现突出，另一方面它的技术方案（LoRA + QAlign）对硬件要求相对友好，适合个人学习。
+
 
 ## 第一步：连接 5880 服务器
 
@@ -632,4 +653,444 @@ json.dump(data[split:], open('val_split.json', 'w'))
 
 ---
 
+## 第八步：数据预处理与 QAlign 分数转换
+
+## 8.1 数据字段对齐
+
+EvalMuse-40K 的实际字段与代码约定存在差异，需要手动映射：
+
+| JSON 字段 | 含义 | 处理方式 |
+|-----------|------|----------|
+| `img_path` | 图片路径，如 `SDXL-Turbo/00110.png` | 拼接 `image_dir` 基路径 |
+| `total_score` | 三个标注员的打分数组，如 `[4,3,3]` | `sum / 3` 取均值 |
+| `element_score` | 元素级二值标注，如 `{"puffin": [1,0,1]}` | 均值化后用于元素增强 |
+| `type` | `"real"` 或 `"synthetic"` | 注入 prompt 前缀做类型增强 |
+| `fidelity_label` | 保真度标签，如 `"真实场景-动物"` | 本次复现暂未使用 |
+
+## 8.2 划分训练 / 验证集
+
+`test.json` 中的 `total_score` 字段全部为 `null`（测试集无标签），无法直接用做验证。从 `train_list.json` 按 9:1 随机切分：
+
+```bash
+python3 -c "
+import json, random
+with open('train_list.json') as f: data = json.load(f)
+random.seed(42); random.shuffle(data)
+split = int(len(data) * 0.9)
+json.dump(data[:split], open('train_split.json','w'))
+json.dump(data[split:], open('val_split.json','w'))
+"
+```
+
+切分后：**训练集 29,445 条，验证集 3,272 条**。
+
+## 8.3 QAlign 分数转换
+
+### 原理
+
+iMatch 的核心设计之一：**将回归问题转化为分类问题**。
+
+1. **训练时**：原始分数 `[1, 5]` 线性映射到 `[1, 15]` 的 15 个离散等级，对应字母 `{a, b, ..., o}`，作为分类标签训练（CrossEntropy Loss）。
+2. **推理时**：取最后一个 token 对应 15 个字母的 logits → 闭集 softmax 得到概率分布 → 概率加权求和插值出连续分数。
+
+### 示例
+
+```
+连续分数 3.72 → 缩放 [1,15] → 10.52 → 四舍五入 → letter "k"
+训练目标：模型输出 token "k"（CE Loss）
+推理：{a..o} 15 个 logits → softmax → Σ(prob_i × i) → 映射回 [1,5]
+```
+
+### 相比传统回归头的优势
+
+传统回归头使用 `MLP(768 → 1)` 配合 MSE Loss，在小范围分数（1-5）上训练不稳定、对标注噪声敏感。QAlign 利用了大模型天然的离散输出能力，用分类目标替代回归目标，既能复用预训练权重，又通过概率插值保留了连续分数的精度。
+
+### 实现代码
+
+```python
+LETTERS = "abcdefghijklmno"
+
+def score_to_letter(score: float) -> str:
+    """[1,5] → scaled [1,15] → letter {a..o}"""
+    scaled = (score - 1) / 4 * 14 + 1
+    idx = max(0, min(14, int(round(scaled)) - 1))
+    return LETTERS[idx]
+
+def qalign_decode(logits, tokenizer) -> float:
+    """推理时：15个字母logits → 概率加权 → [1,5]连续分数"""
+    letter_ids = tokenizer.encode(LETTERS, add_special_tokens=False)
+    if logits.dim() == 3: logits = logits[0, -1, :]
+    elif logits.dim() == 2: logits = logits[-1, :]
+    probs = torch.softmax(logits[letter_ids].float(), dim=-1)
+    weights = torch.arange(1, 16, device=probs.device).float()
+    score_scaled = (probs * weights).sum().item()  # [1, 15]
+    return 1 + (score_scaled - 1) / 14 * 4           # 映射回 [1, 5]
+```
+
+## 8.4 图片分辨率限制与显存优化
+
+Qwen2.5-VL-7B 全模型 bf16 单卡训练约需 45GB 显存。为在 48GB RTX 5880 Ada 上安全运行，将最大图片分辨率限制为 `256 × 28²`（约 200K pixels）：
+
+```python
+processor = AutoProcessor.from_pretrained(
+    model_name,
+    min_pixels=56 * 28 * 28,
+    max_pixels=256 * 28 * 28
+)
+```
+
+图片被切分为约 8 × 8 个 patch，对物体级判断任务影响轻微，同时显存占用显著下降。辅助措施：
+
+| 策略 | 作用 |
+|------|------|
+| `gradient_checkpointing_enable()` | 用计算换显存，前向不缓存中间激活 |
+| `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True` | 防止显存碎片化导致 OOM |
+| `batch_size=1` + 梯度累积 8 步 | 等效 batch = 8，单步显存足够 |
+| `bf16` 混合精度 | 比 fp32 节省一半显存 |
+
+## 8.5 踩坑记录
+
+| 问题 | 原因 | 解决 |
+|------|------|------|
+| `huggingface-cli` 命令失效 | 新版 HF CLI 已替换为 `hf` | 改用 `hf download` |
+| 数据集仓库名返回 401 | 实际为 `DY-Evalab/EvalMuse`，非论文中列出的名称 | 通过 GitHub 官方仓库 clone |
+| 51GB 分片无法直接使用 | LFS 大文件分片存储 | `cat images.zip.part-* > images.zip` 合并后解压 |
+| HFDataset.map() 预处理 OOM | Arrow 格式无法存储变长 `pixel_values` | 改为边读边训的流式处理 |
+| `torch.stack(pixel_values)` 报错 | 多图 patches 形状不统一 | 改用 `torch.cat` 拼接，通过 `image_grid_thw` 区分 |
+| Flash Attention 不可用 | 服务器未安装编译依赖 | 回退为 `sdpa`，训练速度影响不大 |
+| GPU 0 硬件故障 | 该卡持续报 `ERR!` | 运行时自动检测显存并切换到空闲卡 |
+| 服务器频繁崩溃 | 共享集群资源竞争 + GPU 0 硬件问题 | tmux 后台运行，checkpoint 每 400 步自动保存 |
+
+---
+
+> 下一步：Step 9 模型训练（Qwen2.5-VL-7B + LoRA + QAlign 分类目标）
+
+
+---
+
+## 第九步：模型训练 — 完整训练记录
+
+## 背景
+
+复现 NTIRE 2025 图文对齐赛道冠军方案 **iMatch** 的训练阶段。基础模型 **Qwen2.5-VL-7B-Instruct**，数据集 **EvalMuse-40K**（~29K训练 / ~3.2K验证）。
+
+完整项目仓库：[GitHub - DYEvaLab/EvalMuse](https://github.com/DYEvaLab/EvalMuse)
+
+---
+
+## 核心方法：QAlign
+
+传统做法在 MLLM 输出层后接 MLP 回归头直接预测分数，iMatch 把回归问题**转化为分类问题**：
+
+```
+原始分数 [1,5] → 线性缩放 [1,15] → 映射字母 {a..o}
+```
+
+训练时输出字母做 CrossEntropy Loss，推理时对字母 logits 做 softmax 概率加权还原连续分数。**视觉特征直接用 Qwen2.5-VL 内置 ViT，不需要额外编码器。**
+
+---
+
+## 模型配置
+
+| 参数 | 值 |
+|------|-----|
+| 基础模型 | `Qwen/Qwen2.5-VL-7B-Instruct` |
+| 微调方式 | LoRA (r=64, alpha=128) |
+| 可训练参数 | 1.9 亿 / 85 亿 (2.24%) |
+| 计算精度 | bfloat16 |
+| Attention | SDPA |
+
+## 训练配置
+
+| 参数 | 值 |
+|------|-----|
+| Epochs | 2 |
+| 有效 Batch | 8 (1×8 梯度累积) |
+| 学习率 | 2e-5, Cosine |
+| 图片分辨率 | max 256×28×28 |
+| GPU | RTX 5880 Ada (48GB) |
+
+---
+
+## 显存踩坑全记录
+
+Qwen2.5-VL-7B 默认前向 ~45GB，加 LoRA 梯度容易 OOM。三个关键措施：
+
+1. **限制图片分辨率** `max_pixels=256×28×28`，显存 45GB→25GB
+2. **Gradient Checkpointing** 用计算换显存
+3. **Expandable Segments** 防止碎片化
+
+---
+
+## 完整训练代码
+
+### train_final.py
+
+```python
+"""终极版：限分辨率 + 碎片整理，稳定不 OOM"""
+import os, torch, json, random
+from PIL import Image
+from transformers import Qwen2_5_VLForConditionalGeneration, AutoProcessor
+from peft import LoraConfig, get_peft_model, TaskType
+
+MODEL = "Qwen/Qwen2.5-VL-7B-Instruct"
+TRAIN_JSON = os.path.expanduser("~/EvalMuse-40K/train_split.json")
+VAL_JSON = os.path.expanduser("~/EvalMuse-40K/val_split.json")
+IMG_DIR = os.path.expanduser("~/EvalMuse-40K/images/dataset/images")
+OUT = "outputs/run1"
+EPOCHS=2; ACC=8; LR=2e-5
+LETTERS = "abcdefghijklmno"
+SYS = "You are an expert in image-text alignment evaluation."
+MAX_PIXELS = 256 * 28 * 28
+
+def letter(s): return LETTERS[max(0,min(14,int(round((s-1)/4*14))))]
+
+# === 自动选空闲 GPU ===
+import subprocess, re
+r = subprocess.run(["nvidia-smi","--query-gpu=index,memory.free",
+  "--format=csv,noheader"], capture_output=True, text=True)
+gpu = sorted([(int(m), i) for i,m in re.findall(
+  r"(\d+), (\d+) MiB", r.stdout)], reverse=True)[0][1]
+dev = f"cuda:{gpu}"; print(f"GPU {gpu}")
+
+os.makedirs(OUT, exist_ok=True)
+with open(TRAIN_JSON) as f: train_raw = json.load(f)
+with open(VAL_JSON) as f: val_raw = json.load(f)
+print(f"Train:{len(train_raw)} Val:{len(val_raw)}")
+
+# processor 限制分辨率
+proc = AutoProcessor.from_pretrained(MODEL, trust_remote_code=True,
+  min_pixels=56*28*28, max_pixels=MAX_PIXELS)
+model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
+  MODEL, torch_dtype=torch.bfloat16, attn_implementation="sdpa",
+  trust_remote_code=True).to(dev)
+model = get_peft_model(model, LoraConfig(
+  r=64, lora_alpha=128, lora_dropout=0.05,
+  target_modules=["q_proj","v_proj","k_proj","o_proj","gate_proj","up_proj","down_proj"],
+  bias="none", task_type=TaskType.CAUSAL_LM))
+model.print_trainable_parameters()
+model.gradient_checkpointing_enable()
+
+opt = torch.optim.AdamW(model.parameters(), lr=LR)
+model.train(); step=0
+
+for ep in range(EPOCHS):
+    print(f"\n=== Epoch {ep+1}/{EPOCHS} ===")
+    random.shuffle(train_raw)
+    running=0.0; opt.zero_grad()
+    
+    for i, s in enumerate(train_raw):
+        ip = os.path.join(IMG_DIR, s["img_path"])
+        if not os.path.exists(ip):
+            ip = os.path.join(IMG_DIR, s["img_path"].lower())
+        img = Image.open(ip).convert("RGB")
+        score = sum(s["total_score"])/3
+        lb = letter(score)
+        
+        msgs = [
+            {"role":"system","content":[{"type":"text","text":SYS}]},
+            {"role":"user","content":[
+                {"type":"image","image":img},
+                {"type":"text","text":f'Rate: "{s["prompt"]}"'},
+            ]},
+        ]
+        text = proc.apply_chat_template(msgs, tokenize=False,
+          add_generation_prompt=False)
+        inp = proc(text=[text], images=[img], return_tensors="pt", padding=True)
+        lbs = torch.full(inp["input_ids"].shape, -100, device=dev)
+        lbs[0,-1] = proc.tokenizer.encode(lb, add_special_tokens=False)[0]
+        batch = {k: v.to(dev) for k,v in inp.items()}
+        batch["labels"] = lbs
+        
+        with torch.autocast(dev, dtype=torch.bfloat16):
+            loss = model(**batch).loss / ACC
+        loss.backward(); running+=loss.item()
+        
+        if (i+1)%ACC==0:
+            opt.step(); opt.zero_grad(); step+=1
+            if step%20==0:
+                print(f"  step{step:5d}  loss={running/20:.4f}")
+                running=0.0
+            if step%400==0:
+                model.save_pretrained(f"{OUT}/ckpt_{step}")
+                print(f"  >>> saved ckpt_{step}")
+        elif (i+1)%2==0:
+            torch.cuda.empty_cache()
+
+    ck = f"{OUT}/epoch_{ep+1}"
+    model.save_pretrained(ck); proc.save_pretrained(ck)
+    print(f"Saved {ck}")
+
+print(f"\nDone! {OUT}")
+```
+
+### resume.py（断点恢复）
+
+```python
+"""从 checkpoint 恢复训练"""
+import os, torch, json, random, glob
+from PIL import Image
+from transformers import Qwen2_5_VLForConditionalGeneration, AutoProcessor
+from peft import PeftModel
+
+MODEL_ID = "Qwen/Qwen2.5-VL-7B-Instruct"
+TRAIN_JSON = os.path.expanduser("~/EvalMuse-40K/train_split.json")
+IMG_DIR = os.path.expanduser("~/EvalMuse-40K/images/dataset/images")
+CKPT_DIR = "outputs/run1"; OUT = "outputs/run1"
+EPOCHS=2; ACC=8; LR=2e-5
+LETTERS = "abcdefghijklmno"
+SYS = "You are an expert in image-text alignment evaluation."
+MAX_PIXELS = 256 * 28 * 28
+
+# 自动找最新 checkpoint
+ckpts = sorted(glob.glob(f"{CKPT_DIR}/ckpt_*"),
+               key=lambda x: int(x.split("_")[-1]))
+CKPT = ckpts[-1]
+START_STEP = int(CKPT.split("_")[-1]) // 8
+SKIP = START_STEP * ACC
+print(f"Resume from {CKPT} (step {START_STEP}, skip {SKIP} samples)")
+
+def letter(s):
+    return LETTERS[max(0,min(14,int(round((s-1)/4*14))))]
+
+import subprocess, re
+r = subprocess.run(["nvidia-smi","--query-gpu=index,memory.free",
+  "--format=csv,noheader"], capture_output=True, text=True)
+gpu = sorted([(int(m), i) for i,m in re.findall(
+  r"(\d+), (\d+) MiB", r.stdout)], reverse=True)[0][1]
+dev = f"cuda:{gpu}"; print(f"GPU {gpu}")
+
+with open(TRAIN_JSON) as f: train_raw = json.load(f)
+print(f"Train: {len(train_raw)}")
+
+proc = AutoProcessor.from_pretrained(MODEL_ID, trust_remote_code=True,
+  min_pixels=56*28*28, max_pixels=MAX_PIXELS)
+base = Qwen2_5_VLForConditionalGeneration.from_pretrained(
+  MODEL_ID, torch_dtype=torch.bfloat16, attn_implementation="sdpa",
+  trust_remote_code=True).to(dev)
+model = PeftModel.from_pretrained(base, CKPT)
+model.gradient_checkpointing_enable()
+
+opt = torch.optim.AdamW(model.parameters(), lr=LR)
+model.train(); step = START_STEP
+
+for ep in range(EPOCHS):
+    print(f"\n=== Epoch {ep+1}/{EPOCHS} ===")
+    random.shuffle(train_raw)
+    running=0.0; opt.zero_grad()
+    for i, s in enumerate(train_raw):
+        if ep == 0 and i < SKIP:
+            if (i+1)%(ACC*20)==0: print(f"  skip {i+1}/{SKIP}")
+            continue
+        ip = os.path.join(IMG_DIR, s["img_path"])
+        if not os.path.exists(ip):
+            ip = os.path.join(IMG_DIR, s["img_path"].lower())
+        img = Image.open(ip).convert("RGB")
+        score = sum(s["total_score"])/3; lb = letter(score)
+        msgs = [
+            {"role":"system","content":[{"type":"text","text":SYS}]},
+            {"role":"user","content":[
+                {"type":"image","image":img},
+                {"type":"text","text":f'Rate: "{s["prompt"]}"'},
+            ]},
+        ]
+        text = proc.apply_chat_template(msgs, tokenize=False,
+          add_generation_prompt=False)
+        inp = proc(text=[text], images=[img], return_tensors="pt", padding=True)
+        lbs = torch.full(inp["input_ids"].shape, -100, device=dev)
+        lbs[0,-1] = proc.tokenizer.encode(lb, add_special_tokens=False)[0]
+        batch = {k: v.to(dev) for k,v in inp.items()}
+        batch["labels"] = lbs
+        with torch.autocast(dev, dtype=torch.bfloat16):
+            loss = model(**batch).loss / ACC
+        loss.backward(); running+=loss.item()
+        if (i+1)%ACC==0:
+            opt.step(); opt.zero_grad(); step+=1
+            if step%20==0:
+                print(f"  step{step:5d}  loss={running/20:.4f}")
+                running=0.0
+            if step%400==0:
+                model.save_pretrained(f"{OUT}/ckpt_{step}")
+                print(f"  >>> saved ckpt_{step}")
+        elif (i+1)%2==0:
+            torch.cuda.empty_cache()
+    ck = f"{OUT}/epoch_{ep+1}"
+    model.save_pretrained(ck); proc.save_pretrained(ck)
+    print(f"Saved {ck}")
+
+print(f"\nDone! {OUT}")
+```
+
+
+
+> **说明**：esume.py 与 	rain_final.py 的核心逻辑（读图、构造输入、前向/反向、梯度累积、保存 checkpoint）完全一致，区别仅在于 esume.py 多了从最新 checkpoint 恢复并跳过已训练数据继续的逻辑。
+### 启动命令
+
+```bash
+cd ~/imatch && source venv/bin/activate
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+tmux new -s train
+python train_final.py
+# Ctrl+B D 断开
+# 断点恢复: python resume.py
+```
+
+---
+
+## 训练曲线
+
+```
+step   20  loss=11.5881  ← 初始随机
+step   40  loss=2.8887   ← 快速下降
+step  200  loss=2.2911
+step  400  loss=2.1070
+step 1600  loss=2.0034
+step 3200  loss=1.9868
+step 5600  loss=2.0920
+step 7360  loss=2.0587   ← 训练完成
+```
+
+> 注：loss 绝对值高是因为全词表分类（~15万token），模型只需在 15 个字母中区分即可。`run_all.py` 版本在第 40 步时就已经降到了 2.9，说明模型很快学会了 QAlign 打分。
+
+---
+
+## 训练耗时
+
+| 阶段 | 耗时 |
+|------|------|
+| Epoch 1 | ~8h（3680 steps） |
+| Epoch 2 | ~8h |
+| **总计** | **~16h**（单卡 RTX 5880 Ada） |
+
+## 断点恢复机制
+
+- 每 **400 steps** 自动保存 checkpoint
+- 每个 epoch 保存完整模型 + processor
+- `resume.py` 自动找最新 checkpoint，跳过已训练数据继续
+- `tmux` 保持进程不受 SSH 断连影响
+
+## 训练产物
+
+```
+outputs/run1/
+├── ckpt_400 ~ ckpt_7200/   # 18 个中间存档
+├── epoch_1/                # epoch 1 完整模型
+└── epoch_2/                # epoch 2 完整模型
+```
+
+## 下一步
+
+用 `epoch_2` 在验证集做 QAlign 推理，计算 SRCC/PLCC：
+
+| 方法 | SRCC | PLCC |
+|------|------|------|
+| FGA-BLIP2（基线） | 0.6491 | 0.6947 |
+| iMatch（冠军） | 0.8249 | 0.8485 |
+| **本复现** | **待测** | **待测** |
+
+
+---
+
 （后续步骤待补充）
+
+
