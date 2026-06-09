@@ -1,8 +1,8 @@
-import { defineConfig } from "astro/config";
+﻿import { defineConfig } from "astro/config";
 
 export default defineConfig({
-  site: "https://Yuk-Long.github.io",
-  base: "/blog/",
+  site: "http://8.163.114.59",
+  base: "/",
   build: {
     assets: "assets",
   },
