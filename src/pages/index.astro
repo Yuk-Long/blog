@@ -1,4 +1,4 @@
----
+﻿---
 import Layout from '../layouts/Layout.astro';
 import { getCollection } from 'astro:content';
 
@@ -11,11 +11,11 @@ function getPlainTextExcerpt(html: string, length = 200) {
 }
 ---
 
-<Layout title="我的博客" description="一个极简的个人博客">
+<Layout title="鎴戠殑鍗氬" description="涓€涓瀬绠€鐨勪釜浜哄崥瀹?>
   <ul class="post-list">
     {
       posts.length === 0 ? (
-        <p>还没有文章，快去写第一篇吧。</p>
+        <p>杩樻病鏈夋枃绔狅紝蹇幓鍐欑涓€绡囧惂銆?/p>
       ) : (
         posts.map((post) => {
           const excerpt = post.data.description
@@ -23,7 +23,7 @@ function getPlainTextExcerpt(html: string, length = 200) {
           return (
             <li class="post-item">
               <h2>
-                <a href={`/blog/posts/${post.id}/`}>{post.data.title}</a>
+                <a href={`/posts/${post.id}/`}>{post.data.title}</a>
               </h2>
               <div class="post-meta">
                 {post.data.date.toLocaleDateString('zh-CN', {
@@ -31,8 +31,8 @@ function getPlainTextExcerpt(html: string, length = 200) {
                   month: 'long',
                   day: 'numeric',
                 })}
-                {post.data.author && <span> · {post.data.author}</span>}
-                {post.data.readingTime && <span> · 阅读时间 {post.data.readingTime} 分钟</span>}
+                {post.data.author && <span> 路 {post.data.author}</span>}
+                {post.data.readingTime && <span> 路 闃呰鏃堕棿 {post.data.readingTime} 鍒嗛挓</span>}
               </div>
               <p class="post-excerpt">{excerpt}</p>
             </li>
